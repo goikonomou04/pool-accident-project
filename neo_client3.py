@@ -105,7 +105,8 @@ async def main():
                 state = p.get("state", "safe")
 
                 color = color_for_state(state)
-                if color =="(0, 0, 255)":
+                
+                if state =="warning":
                 	print('\a') #hxhtiko                	
 
                 # bbox
