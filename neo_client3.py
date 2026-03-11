@@ -105,6 +105,8 @@ async def main():
                 state = p.get("state", "safe")
 
                 color = color_for_state(state)
+                if color =="(0, 0, 255)":
+                	print('\a') #hxhtiko                	
 
                 # bbox
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
