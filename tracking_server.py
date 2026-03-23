@@ -216,7 +216,7 @@ async def ws_endpoint(ws: WebSocket):
                 if conf < CONF_THR:
                     continue
 
-    detections.append([x1, y1, x2, y2, conf])
+                detections.append([x1, y1, x2, y2, conf])
 
             if len(detections) > 0:
                 detections = np.array(detections, dtype=np.float32)
