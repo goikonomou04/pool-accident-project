@@ -7,14 +7,20 @@ import time
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from bytetrack import BYTETracker
+import sys
+from types import SimpleNamespace
 
-tracker = BYTETracker(
+sys.path.append("/home/goikonom/ByteTrack")
+from yolox.tracker.byte_tracker import BYTETracker
+
+tracker_args = SimpleNamespace(
     track_thresh=0.5,
     match_thresh=0.8,
     track_buffer=30,
-    frame_rate=5
+    mot20=False
 )
+
+tracker = BYTETracker(tracker_args, frame_rate=5)
 
 app = FastAPI()
 
