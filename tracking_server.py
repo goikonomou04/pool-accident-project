@@ -200,10 +200,10 @@ async def ws_endpoint(ws: WebSocket):
                 continue
 
             # YOLO inference
+
             results = model(img, conf=CONF_THR, verbose=False)
 
-            persons = []
-            count_seen = 0
+            detections = []
 
             for box in results[0].boxes:
                 cls_id = int(box.cls[0])
@@ -216,22 +216,40 @@ async def ws_endpoint(ws: WebSocket):
                 if conf < CONF_THR:
                     continue
 
-                count_seen += 1
-                if count_seen > MAX_PERSONS:
+    detections.append([x1, y1, x2, y2, conf])
+
+            if len(detections) > 0:
+                detections = np.array(detections, dtype=np.float32)
+            else:
+                detections = np.empty((0, 5), dtype=np.float32)
+
+            tracks = tracker.update(detections, img.shape[:2], img.shape[:2])
+
+            persons = []
+            count_seen = 0
+
+            for t in tracks:
+                if count_seen >= MAX_PERSONS:
                     break
+
+                x1, y1, x2, y2 = map(int, t.tlbr)
+                track_id = int(t.track_id)
 
                 pose = pose_landmarks_for_person(img, x1, y1, x2, y2)
                 state = detect_state(pose, x1, y1, x2, y2)
 
                 persons.append({
+                    "id": track_id,
                     "x1": int(x1),
                     "y1": int(y1),
                     "x2": int(x2),
                     "y2": int(y2),
-                    "conf": float(conf),
+                    "conf": 1.0,
                     "pose": pose,
                     "state": state
                 })
+
+                count_seen += 1
 
             response = {
                 "ok": True,
