@@ -92,9 +92,8 @@ async def main():
 
             persons = data.get("persons", []) if last_ok else []
 
-            # -------------------------
             # Draw detections
-            # -------------------------
+            
             for p in persons:
                 x1 = int(p.get("x1", 0))
                 y1 = int(p.get("y1", 0))
@@ -137,9 +136,8 @@ async def main():
                         y = int(lm["y"])
                         cv2.circle(frame, (x, y), 4, (0, 255, 255), -1)
 
-            # -------------------------
             # Overlay status
-            # -------------------------
+           
             status = "OK" if last_ok else "ERR"
 
             cv2.putText(
