@@ -46,7 +46,7 @@ async def main():
     last_person_count = 0
     last_error = ""
 
-    async with websockets.connect(WS_URL, max_size=10 * 1024 * 1024) as ws:
+    async with websockets.connect(WS_URL, max_size=10 * 1024 * 1024, proxy=None) as ws:
         while True:
             # FPS pacing
             now = time.time()
