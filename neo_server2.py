@@ -7,6 +7,14 @@ import time
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from bytetrack import BYTETracker
+
+tracker = BYTETracker(
+    track_thresh=0.5,
+    match_thresh=0.8,
+    track_buffer=30,
+    frame_rate=5
+)
 
 app = FastAPI()
 
