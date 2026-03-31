@@ -45,7 +45,7 @@ options = vision.PoseLandmarkerOptions(
 pose_landmarker = vision.PoseLandmarker.create_from_options(options)
 
 # joints pou mas endiaferoun
-JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26]
+JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26, 27, 28]
 VIS_THR = 0.3
 motion_score=1 #thelei tracking, na to ftiaksw!
 
