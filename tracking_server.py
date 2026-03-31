@@ -8,6 +8,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import sys
+import math
 from types import SimpleNamespace
 
 sys.path.append("/home/goikonom/ByteTrack")
@@ -24,6 +25,11 @@ tracker = BYTETracker(tracker_args, frame_rate=5)
 
 app = FastAPI()
 
+track_memory = {}
+
+WARNING_SECS = 4.0
+HORIZONTAL_RATIO = 1.15      # bbox_w / bbox_h πάνω από αυτό => περίπου οριζόντιος
+HORIZONTAL_VEL_THR = 8.0     # px/frame περίπου, θα το ρυθμίσεις εμπειρικά
 
 model = YOLO("yolov8n.pt")
 CONF_THR = 0.35
@@ -43,6 +49,45 @@ JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26]
 VIS_THR = 0.3
 motion_score=1 #thelei tracking, na to ftiaksw!
 
+def point_xy(lm): #dinei tis syntetagmenes se pinaka floats gia na vrw meta gwnia!
+    if lm is None:
+        return None
+    return (float(lm["x"]), float(lm["y"]))
+
+def angle_3pts(a, b, c): #gia na vriskw gwnies xeriwn px
+    if a is None or b is None or c is None:
+        return None
+
+    bax = a[0] - b[0]
+    bay = a[1] - b[1]
+    bcx = c[0] - b[0]
+    bcy = c[1] - b[1]
+
+    norm_ba = math.hypot(bax, bay)
+    norm_bc = math.hypot(bcx, bcy)
+
+    if norm_ba == 0 or norm_bc == 0:
+        return None
+
+    cosang = (bax * bcx + bay * bcy) / (norm_ba * norm_bc)
+    cosang = max(-1.0, min(1.0, cosang))
+    return math.degrees(math.acos(cosang))
+
+
+def bbox_center(x1, y1, x2, y2):
+    return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+
+def compute_velocity(prev_center, curr_center):
+    if prev_center is None or curr_center is None:
+        return 0.0
+    dx = curr_center[0] - prev_center[0]
+    dy = curr_center[1] - prev_center[1]
+    return math.hypot(dx, dy)
+
+def is_horizontal_bbox(x1, y1, x2, y2):
+    w = max(1, x2 - x1)
+    h = max(1, y2 - y1)
+    return (w / h) > HORIZONTAL_RATIO
 
 @app.get("/ping")
 def ping():
