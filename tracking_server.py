@@ -295,7 +295,7 @@ async def ws_endpoint(ws: WebSocket):
                     "y1": int(y1),
                     "x2": int(x2),
                     "y2": int(y2),
-                    "conf": 1.0,
+                    "conf": conf,
                     "pose": pose,
                     "state": state
                 })
