@@ -8,6 +8,11 @@ import math
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+
+import asyncio
+
+frame_bytes = await asyncio.wait_for(ws.receive_bytes(), timeout=5.0)
+
 import sys
 from types import SimpleNamespace
 
@@ -28,7 +33,7 @@ app = FastAPI()
 
 model = YOLO("yolov8n.pt")
 CONF_THR = 0.35
-MAX_PERSONS = 5
+MAX_PERSONS = 12
 
 POSE_MODEL_PATH = "/home/goikonom/diplw/pose_landmarker_lite.task"
 
@@ -269,7 +274,7 @@ def cleanup_old_tracks(now):
 
 def detect_state(pose, mem, now):
     if not pose:
-        return "warning"
+        return "warning" if mem.get("is_horizontal") else "unknown"
 
     head_below_too_long = (
         mem["head_below_shoulders_since"] is not None and
