@@ -25,15 +25,13 @@ tracker = BYTETracker(tracker_args, frame_rate=5)
 
 app = FastAPI()
 
-track_memory = {}
+model = YOLO("yolov8n.pt")
+CONF_THR = 0.35
+MAX_PERSONS = 5
 
 WARNING_SECS = 4.0
 HORIZONTAL_RATIO = 1.15      # bbox_w / bbox_h πάνω από αυτό => περίπου οριζόντιος
 HORIZONTAL_VEL_THR = 8.0     # px/frame περίπου, θα το ρυθμίσεις εμπειρικά
-
-model = YOLO("yolov8n.pt")
-CONF_THR = 0.35
-MAX_PERSONS = 5
 
 POSE_MODEL_PATH = "/home/goikonom/diplw/pose_landmarker_lite.task"
 
@@ -48,6 +46,8 @@ pose_landmarker = vision.PoseLandmarker.create_from_options(options)
 JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26, 27, 28]
 VIS_THR = 0.3
 motion_score=1 #thelei tracking, na to ftiaksw!
+
+track_memory = {}
 
 def point_xy(lm): #dinei tis syntetagmenes se pinaka floats gia na vrw meta gwnia!
     if lm is None:
@@ -219,7 +219,7 @@ def detect_state(pose, x1, y1, x2, y2):
         return "warning"
 
     # ypsilo suspicion an to kefali einai poly xamila sto bbox
-    # (poly aprosfo, alla xrisimo san placeholder heuristic)
+    # xrisimo san placeholder heuristic
     rel_head_y = (nose["y"] - y1) / bbox_h
     if rel_head_y > 0.55:
         return "danger"
