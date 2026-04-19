@@ -294,7 +294,10 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     mem = track_memory.get(track_id, {})
 
     if not pose:
-        return "warning"
+        if mem.get("missing_since") is None:
+            return "safe"
+        else:
+            return "warning"
 
     velocity = float(mem.get("velocity", 0.0))
     horizontal = bool(mem.get("is_horizontal", False))
@@ -313,7 +316,7 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     if hand_above_head_since is not None and (now - hand_above_head_since) >= 1.5:
         return "danger"
 
-    if horizontal and velocity < 3.0:
+    if horizontal and velocity < HORIZONTAL_VEL_THR:
         return "danger"
 
     if head_low_since is not None and (now - head_low_since) >= 1.5:
@@ -393,7 +396,7 @@ async def ws_endpoint(ws: WebSocket):
                     "y1": int(y1),
                     "x2": int(x2),
                     "y2": int(y2),
-                    "conf": None,
+                    #"conf": None,
                     "pose": pose,
                     "state": state
                 })
