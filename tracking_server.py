@@ -27,7 +27,7 @@ app = FastAPI()
 
 model = YOLO("yolov8n.pt")
 CONF_THR = 0.35
-MAX_PERSONS = 5
+MAX_PERSONS = 8
 
 WARNING_SECS = 4.0
 HORIZONTAL_RATIO = 1.15      # bbox_w / bbox_h πάνω από αυτό => περίπου οριζόντιος
@@ -45,7 +45,7 @@ pose_landmarker = vision.PoseLandmarker.create_from_options(options)
 # joints pou mas endiaferoun
 JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26, 27, 28]
 VIS_THR = 0.3
-motion_score=1 #thelei tracking, na to ftiaksw!
+#motion_score = 0.1
 
 track_memory = {}
 
@@ -157,20 +157,115 @@ def get_lm(pose, lm_id):
             return lm
     return None
 
+def extract_pose_features(pose):
+    nose = get_lm(pose, 0)
+    l_sh = get_lm(pose, 11)
+    r_sh = get_lm(pose, 12)
+    l_wr = get_lm(pose, 15)
+    r_wr = get_lm(pose, 16)
+    l_hip = get_lm(pose, 23)
+    r_hip = get_lm(pose, 24)
+
+    nose_pt = point_xy(nose)
+    l_sh_pt = point_xy(l_sh)
+    r_sh_pt = point_xy(r_sh)
+    l_wr_pt = point_xy(l_wr)
+    r_wr_pt = point_xy(r_wr)
+    l_hip_pt = point_xy(l_hip)
+    r_hip_pt = point_xy(r_hip)
+
+    left_arm_head_angle = angle_3pts(l_wr_pt, l_sh_pt, nose_pt)
+    right_arm_head_angle = angle_3pts(r_wr_pt, r_sh_pt, nose_pt)
+
+    head_below_shoulders = False
+    if nose and l_sh and r_sh:
+        shoulder_y = (l_sh["y"] + r_sh["y"]) / 2.0
+        head_below_shoulders = nose["y"] > shoulder_y
+
+    return {
+        "head_below_shoulders": head_below_shoulders,
+        "left_arm_head_angle": left_arm_head_angle,
+        "right_arm_head_angle": right_arm_head_angle,
+    }
+
+def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
+    cx, cy = bbox_center(x1, y1, x2, y2)
+
+    if track_id not in track_memory:
+        track_memory[track_id] = {
+            "last_seen": now,
+            "last_bbox": (x1, y1, x2, y2),
+            "last_center": (cx, cy),
+            "velocity": 0.0,
+            "is_horizontal": False,
+            "missing_since": None,
+            "head_below_shoulders_since": None,
+            "arm_angle_left": None,
+            "arm_angle_right": None,
+        }
+
+    mem = track_memory[track_id]
+    vel = compute_velocity(mem.get("last_center"), (cx, cy))
+    horizontal = is_horizontal_bbox(x1, y1, x2, y2)
+
+    if pose:
+        features = extract_pose_features(pose)
+    else:
+        features = {
+            "head_below_shoulders": False,
+            "left_arm_head_angle": None,
+            "right_arm_head_angle": None,
+        }
+
+    mem["last_seen"] = now
+    mem["last_bbox"] = (x1, y1, x2, y2)
+    mem["last_center"] = (cx, cy)
+    mem["velocity"] = vel if horizontal else 0.0
+    mem["is_horizontal"] = horizontal
+    mem["arm_angle_left"] = features["left_arm_head_angle"]
+    mem["arm_angle_right"] = features["right_arm_head_angle"]
+    mem["missing_since"] = None
+
+    if features["head_below_shoulders"]:
+        if mem["head_below_shoulders_since"] is None:
+            mem["head_below_shoulders_since"] = now
+    else:
+        mem["head_below_shoulders_since"] = None
+
+    return mem
+
+
+def update_missing_ids(seen_ids, now):
+    for tid, mem in track_memory.items():
+        if tid not in seen_ids:
+            if mem["missing_since"] is None:
+                mem["missing_since"] = now
+        else:
+            mem["missing_since"] = None
+            
+
+def warn_missing_ids(now):
+    out = []
+    for tid, mem in track_memory.items():
+        if mem["missing_since"] is not None and (now - mem["missing_since"]) > WARNING_SECS:
+            out.append(tid)
+    return out
+    
+
+def cleanup_old_tracks(now):
+    to_delete = []
+    for tid, mem in track_memory.items():
+        if (now - mem.get("last_seen", now)) > MEMORY_TTL_SECS:
+            to_delete.append(tid)
+
+    for tid in to_delete:
+        del track_memory[tid]
+
+
+
 
 def detect_state(pose, x1, y1, x2, y2):
-    """
-    Aplo heuristic gia demo:
-    - danger: den fainontai ka8olou shoulders/hips h to nose einai xamila mesa sto bbox
-    - warning: leipoun kapoia vasika joints
-    - safe: alliws
-    IDANIKA apla risk score px
-    % head low
-    % flailing
-    % abnormal angle
-    % motionless/ disappearence
-    % emotion
-    """
+    
 
     if not pose:
         return "warning"
