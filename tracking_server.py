@@ -244,8 +244,6 @@ def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
     mem["last_center"] = (cx, cy)
     mem["velocity"] = vel
     mem["is_horizontal"] = horizontal
-    mem["arm_angle_left"] = features["left_arm_head_angle"]
-    mem["arm_angle_right"] = features["right_arm_head_angle"]
     mem["missing_since"] = None
 
     if features["head_below_shoulders"]:
@@ -375,6 +373,8 @@ async def ws_endpoint(ws: WebSocket):
             persons = []
             count_seen = 0
 
+            now = time.time()
+
             for t in tracks:
                 if count_seen >= MAX_PERSONS:
                     break
@@ -384,7 +384,6 @@ async def ws_endpoint(ws: WebSocket):
 
                 pose = pose_landmarks_for_person(img, x1, y1, x2, y2)
                 
-                now = time.time()
                 mem = update_track_memory(track_id, pose, x1, y1, x2, y2, now)
                 state = detect_state(track_id, pose, x1, y1, x2, y2, now)
 
