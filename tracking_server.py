@@ -238,19 +238,11 @@ def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
     mem["arm_angle_left"] = features["left_arm_head_angle"]
     mem["arm_angle_right"] = features["right_arm_head_angle"]
 
-    if pose:
-        features = extract_pose_features(pose)
-    else:
-        features = {
-            "head_below_shoulders": False,
-            "left_arm_head_angle": None,
-            "right_arm_head_angle": None,
-        }
 
     mem["last_seen"] = now
     mem["last_bbox"] = (x1, y1, x2, y2)
     mem["last_center"] = (cx, cy)
-    mem["velocity"] = vel if horizontal else 0.0
+    mem["velocity"] = vel
     mem["is_horizontal"] = horizontal
     mem["arm_angle_left"] = features["left_arm_head_angle"]
     mem["arm_angle_right"] = features["right_arm_head_angle"]
@@ -302,6 +294,9 @@ def cleanup_old_tracks(now):
 
 def detect_state(track_id, pose, x1, y1, x2, y2, now):
     mem = track_memory.get(track_id, {})
+
+    if not pose:
+        return "warning"
 
     velocity = float(mem.get("velocity", 0.0))
     horizontal = bool(mem.get("is_horizontal", False))
@@ -399,13 +394,17 @@ async def ws_endpoint(ws: WebSocket):
                     "y1": int(y1),
                     "x2": int(x2),
                     "y2": int(y2),
-                    "conf": conf,
+                    "conf": None,
                     "pose": pose,
                     "state": state
                 })
 
                 count_seen += 1
 
+            seen_ids = {int(t.track_id) for t in tracks[:MAX_PERSONS]}
+            update_missing_ids(seen_ids, now)
+            cleanup_old_tracks(now)
+            
             response = {
                 "ok": True,
                 "person_count": len(persons),
