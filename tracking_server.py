@@ -49,6 +49,8 @@ VIS_THR = 0.3
 
 track_memory = {}
 
+MEMORY_TTL_SECS = 10.0
+
 def point_xy(lm): #dinei tis syntetagmenes se pinaka floats gia na vrw meta gwnia!
     if lm is None:
         return None
@@ -182,8 +184,21 @@ def extract_pose_features(pose):
         shoulder_y = (l_sh["y"] + r_sh["y"]) / 2.0
         head_below_shoulders = nose["y"] > shoulder_y
 
+    hand_above_head = False
+    if nose:
+        if l_wr and l_wr["y"] < nose["y"]:
+            hand_above_head = True
+        if r_wr and r_wr["y"] < nose["y"]:
+            hand_above_head = True
+
+    legs_visible = any(get_lm(pose, i) is not None for i in [25, 26, 27, 28])
+    head_visible = nose is not None
+
     return {
+        "head_visible": head_visible,
+        "legs_visible": legs_visible,
         "head_below_shoulders": head_below_shoulders,
+        "hand_above_head": hand_above_head,
         "left_arm_head_angle": left_arm_head_angle,
         "right_arm_head_angle": right_arm_head_angle,
     }
@@ -208,6 +223,21 @@ def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
     vel = compute_velocity(mem.get("last_center"), (cx, cy))
     horizontal = is_horizontal_bbox(x1, y1, x2, y2)
 
+    features = extract_pose_features(pose) if pose else {
+        "head_visible": False,
+        "legs_visible": False,
+        "head_below_shoulders": False,
+        "hand_above_head": False,
+        "left_arm_head_angle": None,
+        "right_arm_head_angle": None,
+    }
+    
+    mem["head_visible"] = features["head_visible"]
+    mem["legs_visible"] = features["legs_visible"]
+    mem["hand_above_head"] = features["hand_above_head"]
+    mem["arm_angle_left"] = features["left_arm_head_angle"]
+    mem["arm_angle_right"] = features["right_arm_head_angle"]
+
     if pose:
         features = extract_pose_features(pose)
     else:
@@ -231,6 +261,12 @@ def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
             mem["head_below_shoulders_since"] = now
     else:
         mem["head_below_shoulders_since"] = None
+    
+    if features["hand_above_head"]:
+        if mem.get("hand_above_head_since") is None:
+            mem["hand_above_head_since"] = now
+    else:
+        mem["hand_above_head_since"] = None
 
     return mem
 
@@ -264,63 +300,33 @@ def cleanup_old_tracks(now):
 
 
 
-def detect_state(pose, x1, y1, x2, y2):
-    
+def detect_state(track_id, pose, x1, y1, x2, y2, now):
+    mem = track_memory.get(track_id, {})
 
-    if not pose:
-        return "warning"
+    velocity = float(mem.get("velocity", 0.0))
+    horizontal = bool(mem.get("is_horizontal", False))
+    missing_since = mem.get("missing_since")
+    head_visible = bool(mem.get("head_visible", False))
+    legs_visible = bool(mem.get("legs_visible", False))
+    hand_above_head_since = mem.get("hand_above_head_since")
+    head_low_since = mem.get("head_below_shoulders_since")
 
-    nose = get_lm(pose, 0)
-    l_sh = get_lm(pose, 11)
-    r_sh = get_lm(pose, 12)
-    l_hip = get_lm(pose, 23)
-    r_hip = get_lm(pose, 24)
+    if missing_since is not None and (now - missing_since) >= WARNING_SECS:
+        return "danger"
 
-    bbox_w = max(1, x2 - x1)
-    bbox_h = max(1, y2 - y1)
-    horizontal = bbox_w > bbox_h
-    
-    
-    
-    #einai ektos nerou?
-    head_visible = get_lm(pose, 0) is not None
-    legs_visible = any(get_lm(pose, i) is not None for i in [25, 26, 27, 28])
-    
-    # full body & vertical -> probably out of water / safe
     if head_visible and legs_visible and not horizontal:
         return "safe"
 
-    # full body & horizontal -> need motion check
-    if head_visible and legs_visible and horizontal:
-        if motion_score > 0.03:
-            return "safe"      # likely swimming
-        else:
-            return "danger"    # floating / still / suspicious
-
-    # head visible but lower body missing -> likely in water
-    if head_visible and not legs_visible:
-        if motion_score < 0.01:
-            return "warning"
-        return "safe"
-
-    return "warning"
-
-    # an leipoun kai oi 2 wμοi ή και oi 2 γοφοι -> πιο ύποπτο
-    if (l_sh is None and r_sh is None) or (l_hip is None and r_hip is None):
+    if hand_above_head_since is not None and (now - hand_above_head_since) >= 1.5:
         return "danger"
 
-    # an leipei nose -> warning
-    if nose is None:
+    if horizontal and velocity < 3.0:
+        return "danger"
+
+    if head_low_since is not None and (now - head_low_since) >= 1.5:
         return "warning"
 
-    # ypsilo suspicion an to kefali einai poly xamila sto bbox
-    # xrisimo san placeholder heuristic
-    rel_head_y = (nose["y"] - y1) / bbox_h
-    if rel_head_y > 0.55:
-        return "danger"
-
-    # an leipei enas omos h enas gofos
-    if l_sh is None or r_sh is None or l_hip is None or r_hip is None:
+    if head_visible and not legs_visible and velocity < 2.0:
         return "warning"
 
     return "safe"
@@ -382,7 +388,10 @@ async def ws_endpoint(ws: WebSocket):
                 track_id = int(t.track_id)
 
                 pose = pose_landmarks_for_person(img, x1, y1, x2, y2)
-                state = detect_state(pose, x1, y1, x2, y2)
+                
+                now = time.time()
+                mem = update_track_memory(track_id, pose, x1, y1, x2, y2, now)
+                state = detect_state(track_id, pose, x1, y1, x2, y2, now)
 
                 persons.append({
                     "id": track_id,
