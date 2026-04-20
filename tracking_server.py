@@ -313,18 +313,14 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     hand_above_head_since = mem.get("hand_above_head_since")
     head_low_since = mem.get("head_below_shoulders_since")
 
-    # ---------------------------------
-    # 1. Instant missing -> max risk
-    # ---------------------------------
+    #an leipei wra
     if missing_since is not None and (now - missing_since) >= WARNING_SECS:
         instant_risk = 1.0
         smoothed_risk = 1.0
         mem["risk_score"] = smoothed_risk
         return "danger", smoothed_risk
 
-    # ---------------------------------
-    # 2. Αν δεν υπάρχει pose αλλά υπάρχει ακόμα track
-    # ---------------------------------
+    #otan oxi pose alla parauta track?
     if not pose:
         instant_risk = 0.35
         smoothed_risk = SMOOTH_ALPHA * prev_risk + (1.0 - SMOOTH_ALPHA) * instant_risk
@@ -338,9 +334,8 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
         else:
             return "safe", smoothed_risk
 
-    # ---------------------------------
-    # 3. Instant risk από heuristics
-    # ---------------------------------
+    #heuristics
+    
     instant_risk = 0.0
 
     # horizontal posture
@@ -366,9 +361,8 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     # clamp instant risk
     instant_risk = min(max(instant_risk, 0.0), 1.0)
 
-    # ---------------------------------
-    # 4. Safe override
-    # ---------------------------------
+    # ksekathara safe
+    
     clearly_safe = head_visible and legs_visible and (not horizontal) and (velocity >= LOW_VEL_THR)
 
     if clearly_safe:
@@ -382,9 +376,8 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     # save back
     mem["risk_score"] = smoothed_risk
 
-    # ---------------------------------
-    # 5. Thresholds -> state
-    # ---------------------------------
+    # state apo katwflia
+    
     if smoothed_risk >= DANGER_THR:
         return "danger", smoothed_risk
     elif smoothed_risk >= WARNING_THR:
