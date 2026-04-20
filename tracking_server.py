@@ -47,6 +47,16 @@ JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26, 27, 28]
 VIS_THR = 0.3
 #motion_score = 0.1
 
+DANGER_THR = 0.7
+WARNING_THR = 0.05
+
+LOW_VEL_THR = 2.0
+HEAD_LOW_SECS = 1.5
+HAND_UP_SECS = 1.5
+
+SMOOTH_ALPHA = 0.7   # πόσο κρατάει μνήμη από το παλιό risk
+SAFE_DECAY = 0.85    # optional decay όταν βλέπουμε καθαρά safe κατάσταση
+
 track_memory = {}
 
 MEMORY_TTL_SECS = 10.0
@@ -217,6 +227,7 @@ def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
             "head_below_shoulders_since": None,
             "arm_angle_left": None,
             "arm_angle_right": None,
+            "risk_score": 0.0,
         }
 
     mem = track_memory[track_id]
@@ -293,12 +304,7 @@ def cleanup_old_tracks(now):
 def detect_state(track_id, pose, x1, y1, x2, y2, now):
     mem = track_memory.get(track_id, {})
 
-    if not pose:
-        if mem.get("missing_since") is None:
-            return "safe"
-        else:
-            return "warning"
-
+    prev_risk = float(mem.get("risk_score", 0.0))
     velocity = float(mem.get("velocity", 0.0))
     horizontal = bool(mem.get("is_horizontal", False))
     missing_since = mem.get("missing_since")
@@ -307,25 +313,84 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     hand_above_head_since = mem.get("hand_above_head_since")
     head_low_since = mem.get("head_below_shoulders_since")
 
+    # ---------------------------------
+    # 1. Instant missing -> max risk
+    # ---------------------------------
     if missing_since is not None and (now - missing_since) >= WARNING_SECS:
-        return "danger"
+        instant_risk = 1.0
+        smoothed_risk = 1.0
+        mem["risk_score"] = smoothed_risk
+        return "danger", smoothed_risk
 
-    if head_visible and legs_visible and not horizontal:
-        return "safe"
+    # ---------------------------------
+    # 2. Αν δεν υπάρχει pose αλλά υπάρχει ακόμα track
+    # ---------------------------------
+    if not pose:
+        instant_risk = 0.35
+        smoothed_risk = SMOOTH_ALPHA * prev_risk + (1.0 - SMOOTH_ALPHA) * instant_risk
+        smoothed_risk = min(max(smoothed_risk, 0.0), 1.0)
+        mem["risk_score"] = smoothed_risk
 
-    if hand_above_head_since is not None and (now - hand_above_head_since) >= 1.5:
-        return "danger"
+        if smoothed_risk >= DANGER_THR:
+            return "danger", smoothed_risk
+        elif smoothed_risk >= WARNING_THR:
+            return "warning", smoothed_risk
+        else:
+            return "safe", smoothed_risk
 
-    if horizontal and velocity < HORIZONTAL_VEL_THR:
-        return "danger"
+    # ---------------------------------
+    # 3. Instant risk από heuristics
+    # ---------------------------------
+    instant_risk = 0.0
 
-    if head_low_since is not None and (now - head_low_since) >= 1.5:
-        return "warning"
+    # horizontal posture
+    if horizontal:
+        instant_risk += 0.30
 
-    if head_visible and not legs_visible and velocity < 2.0:
-        return "warning"
+    # low motion / stillness
+    if velocity < LOW_VEL_THR:
+        instant_risk += 0.30
 
-    return "safe"
+    # head visible but legs not visible
+    if head_visible and not legs_visible:
+        instant_risk += 0.20
+
+    # head low continuously
+    if head_low_since is not None and (now - head_low_since) >= HEAD_LOW_SECS:
+        instant_risk += 0.30
+
+    # hand above head continuously
+    if hand_above_head_since is not None and (now - hand_above_head_since) >= HAND_UP_SECS:
+        instant_risk += 0.30
+
+    # clamp instant risk
+    instant_risk = min(max(instant_risk, 0.0), 1.0)
+
+    # ---------------------------------
+    # 4. Safe override
+    # ---------------------------------
+    clearly_safe = head_visible and legs_visible and (not horizontal) and (velocity >= LOW_VEL_THR)
+
+    if clearly_safe:
+        smoothed_risk = prev_risk * SAFE_DECAY
+    else:
+        smoothed_risk = SMOOTH_ALPHA * prev_risk + (1.0 - SMOOTH_ALPHA) * instant_risk
+
+    # clamp final risk
+    smoothed_risk = min(max(smoothed_risk, 0.0), 1.0)
+
+    # save back
+    mem["risk_score"] = smoothed_risk
+
+    # ---------------------------------
+    # 5. Thresholds -> state
+    # ---------------------------------
+    if smoothed_risk >= DANGER_THR:
+        return "danger", smoothed_risk
+    elif smoothed_risk >= WARNING_THR:
+        return "warning", smoothed_risk
+    else:
+        return "safe", smoothed_risk
 
 
 @app.websocket("/ws")
@@ -388,7 +453,7 @@ async def ws_endpoint(ws: WebSocket):
                 pose = pose_landmarks_for_person(img, x1, y1, x2, y2)
                 
                 mem = update_track_memory(track_id, pose, x1, y1, x2, y2, now)
-                state = detect_state(track_id, pose, x1, y1, x2, y2, now)
+                state, risk = detect_state(track_id, pose, x1, y1, x2, y2, now)
 
                 persons.append({
                     "id": track_id,
@@ -398,7 +463,8 @@ async def ws_endpoint(ws: WebSocket):
                     "y2": int(y2),
                     #"conf": None,
                     "pose": pose,
-                    "state": state
+                    "state": state,
+                    "risk": round(risk, 2),
                 })
 
                 count_seen += 1
