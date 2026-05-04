@@ -20,7 +20,6 @@ tracker_args = SimpleNamespace(
     track_buffer=30,
     mot20=False
 )
-
 tracker = BYTETracker(tracker_args, frame_rate=5)
 
 app = FastAPI()
@@ -30,11 +29,9 @@ CONF_THR = 0.35
 MAX_PERSONS = 8
 
 WARNING_SECS = 4.0
-HORIZONTAL_RATIO = 1.15      # bbox_w / bbox_h πάνω από αυτό => περίπου οριζόντιος
-HORIZONTAL_VEL_THR = 8.0     # px/frame περίπου, θα το ρυθμίσεις εμπειρικά
+HORIZONTAL_RATIO = 1.15
 
 POSE_MODEL_PATH = "/home/goikonom/diplw/pose_landmarker_lite.task"
-
 base_options = python.BaseOptions(model_asset_path=POSE_MODEL_PATH)
 options = vision.PoseLandmarkerOptions(
     base_options=base_options,
@@ -42,45 +39,38 @@ options = vision.PoseLandmarkerOptions(
 )
 pose_landmarker = vision.PoseLandmarker.create_from_options(options)
 
-# joints pou mas endiaferoun
 JOINTS = [0, 11, 12, 15, 16, 23, 24, 25, 26, 27, 28]
 VIS_THR = 0.3
-#motion_score = 0.1
 
 DANGER_THR = 0.7
 WARNING_THR = 0.05
-
 LOW_VEL_THR = 2.0
 HEAD_LOW_SECS = 1.5
 HAND_UP_SECS = 1.5
-
-SMOOTH_ALPHA = 0.7   # πόσο κρατάει μνήμη από το παλιό risk
-SAFE_DECAY = 0.85    # optional decay όταν βλέπουμε καθαρά safe κατάσταση
+SMOOTH_ALPHA = 0.7
+SAFE_DECAY = 0.85
+MEMORY_TTL_SECS = 10.0
 
 track_memory = {}
 
-MEMORY_TTL_SECS = 10.0
 
-def point_xy(lm): #dinei tis syntetagmenes se pinaka floats gia na vrw meta gwnia!
+def point_xy(lm):
     if lm is None:
         return None
     return (float(lm["x"]), float(lm["y"]))
 
-def angle_3pts(a, b, c): #gia na vriskw gwnies xeriwn px
+
+def angle_3pts(a, b, c):
     if a is None or b is None or c is None:
         return None
-
     bax = a[0] - b[0]
     bay = a[1] - b[1]
     bcx = c[0] - b[0]
     bcy = c[1] - b[1]
-
     norm_ba = math.hypot(bax, bay)
     norm_bc = math.hypot(bcx, bcy)
-
     if norm_ba == 0 or norm_bc == 0:
         return None
-
     cosang = (bax * bcx + bay * bcy) / (norm_ba * norm_bc)
     cosang = max(-1.0, min(1.0, cosang))
     return math.degrees(math.acos(cosang))
@@ -89,6 +79,7 @@ def angle_3pts(a, b, c): #gia na vriskw gwnies xeriwn px
 def bbox_center(x1, y1, x2, y2):
     return ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
 
+
 def compute_velocity(prev_center, curr_center):
     if prev_center is None or curr_center is None:
         return 0.0
@@ -96,69 +87,11 @@ def compute_velocity(prev_center, curr_center):
     dy = curr_center[1] - prev_center[1]
     return math.hypot(dx, dy)
 
+
 def is_horizontal_bbox(x1, y1, x2, y2):
     w = max(1, x2 - x1)
     h = max(1, y2 - y1)
     return (w / h) > HORIZONTAL_RATIO
-
-@app.get("/ping")
-def ping():
-    return {"ok": True}
-
-
-def pose_landmarks_for_person(img_bgr, x1, y1, x2, y2):
-    H, W = img_bgr.shape[:2]
-
-    # clamp sta oria tou frame
-    x1 = max(0, min(int(x1), W - 1))
-    y1 = max(0, min(int(y1), H - 1))
-    x2 = max(0, min(int(x2), W))
-    y2 = max(0, min(int(y2), H))
-
-    if x2 <= x1 or y2 <= y1:
-        return None
-
-    roi = img_bgr[y1:y2, x1:x2]
-    if roi.size == 0:
-        return None
-
-    roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-
-    mp_image = mp.Image(
-        image_format=mp.ImageFormat.SRGB,
-        data=roi_rgb
-    )
-
-    result = pose_landmarker.detect(mp_image)
-
-    if not result.pose_landmarks:
-        return None
-
-    h, w = roi.shape[:2]
-    pose = result.pose_landmarks[0]
-    landmarks = []
-
-    for i in JOINTS:
-        if i >= len(pose):
-            continue
-
-        lm = pose[i]
-
-        if float(lm.visibility) < VIS_THR:
-            continue
-
-        # apo crop coordinates -> full frame coordinates
-        px = x1 + int(lm.x * w)
-        py = y1 + int(lm.y * h)
-
-        landmarks.append({
-            "id": i,
-            "x": int(px),
-            "y": int(py),
-            "v": float(lm.visibility)
-        })
-
-    return landmarks if landmarks else None
 
 
 def get_lm(pose, lm_id):
@@ -169,100 +102,112 @@ def get_lm(pose, lm_id):
             return lm
     return None
 
-def extract_pose_features(pose):
+
+def pose_landmarks_for_person(img_bgr, x1, y1, x2, y2):
+    H, W = img_bgr.shape[:2]
+    x1 = max(0, min(int(x1), W - 1))
+    y1 = max(0, min(int(y1), H - 1))
+    x2 = max(0, min(int(x2), W))
+    y2 = max(0, min(int(y2), H))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    roi = img_bgr[y1:y2, x1:x2]
+    if roi.size == 0:
+        return None
+    roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
+    result = pose_landmarker.detect(mp_image)
+    if not result.pose_landmarks:
+        return None
+    h, w = roi.shape[:2]
+    pose = result.pose_landmarks[0]
+    landmarks = []
+    for i in JOINTS:
+        if i >= len(pose):
+            continue
+        lm = pose[i]
+        if float(lm.visibility) < VIS_THR:
+            continue
+        px = x1 + int(lm.x * w)
+        py = y1 + int(lm.y * h)
+        landmarks.append({
+            "id": i,
+            "x": int(px),
+            "y": int(py),
+            "v": float(lm.visibility)
+        })
+    return landmarks if landmarks else None
+
+
+def extract_features(pose, x1, y1, x2, y2):
     nose = get_lm(pose, 0)
     l_sh = get_lm(pose, 11)
     r_sh = get_lm(pose, 12)
     l_wr = get_lm(pose, 15)
     r_wr = get_lm(pose, 16)
-    l_hip = get_lm(pose, 23)
-    r_hip = get_lm(pose, 24)
 
-    nose_pt = point_xy(nose)
-    l_sh_pt = point_xy(l_sh)
-    r_sh_pt = point_xy(r_sh)
-    l_wr_pt = point_xy(l_wr)
-    r_wr_pt = point_xy(r_wr)
-    l_hip_pt = point_xy(l_hip)
-    r_hip_pt = point_xy(r_hip)
-
-    left_arm_head_angle = angle_3pts(l_wr_pt, l_sh_pt, nose_pt)
-    right_arm_head_angle = angle_3pts(r_wr_pt, r_sh_pt, nose_pt)
+    head_visible = nose is not None
+    legs_visible = any(get_lm(pose, i) is not None for i in [25, 26, 27, 28])
 
     head_below_shoulders = False
-    if nose and l_sh and r_sh:
-        shoulder_y = (l_sh["y"] + r_sh["y"]) / 2.0
-        head_below_shoulders = nose["y"] > shoulder_y
+    if nose is not None and (l_sh is not None or r_sh is not None):
+        sh_y_vals = [s["y"] for s in (l_sh, r_sh) if s is not None]
+        if sh_y_vals:
+            avg_sh_y = sum(sh_y_vals) / len(sh_y_vals)
+            if nose["y"] > avg_sh_y:
+                head_below_shoulders = True
 
     hand_above_head = False
-    if nose:
-        if l_wr and l_wr["y"] < nose["y"]:
-            hand_above_head = True
-        if r_wr and r_wr["y"] < nose["y"]:
-            hand_above_head = True
-
-    legs_visible = any(get_lm(pose, i) is not None for i in [25, 26, 27, 28])
-    head_visible = nose is not None
+    if nose is not None:
+        for wr in (l_wr, r_wr):
+            if wr is not None and wr["y"] < nose["y"]:
+                hand_above_head = True
+                break
 
     return {
         "head_visible": head_visible,
         "legs_visible": legs_visible,
         "head_below_shoulders": head_below_shoulders,
         "hand_above_head": hand_above_head,
-        "left_arm_head_angle": left_arm_head_angle,
-        "right_arm_head_angle": right_arm_head_angle,
     }
+
 
 def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
-    cx, cy = bbox_center(x1, y1, x2, y2)
-
-    if track_id not in track_memory:
-        track_memory[track_id] = {
+    mem = track_memory.get(track_id)
+    if mem is None:
+        mem = {
+            "first_seen": now,
             "last_seen": now,
-            "last_bbox": (x1, y1, x2, y2),
-            "last_center": (cx, cy),
+            "prev_center": None,
             "velocity": 0.0,
             "is_horizontal": False,
-            "missing_since": None,
+            "head_visible": False,
+            "legs_visible": False,
             "head_below_shoulders_since": None,
-            "arm_angle_left": None,
-            "arm_angle_right": None,
+            "hand_above_head_since": None,
+            "missing_since": None,
             "risk_score": 0.0,
         }
+        track_memory[track_id] = mem
 
-    mem = track_memory[track_id]
-    vel = compute_velocity(mem.get("last_center"), (cx, cy))
-    horizontal = is_horizontal_bbox(x1, y1, x2, y2)
+    curr_center = bbox_center(x1, y1, x2, y2)
+    velocity = compute_velocity(mem.get("prev_center"), curr_center)
+    mem["prev_center"] = curr_center
+    mem["velocity"] = velocity
+    mem["last_seen"] = now
+    mem["missing_since"] = None
+    mem["is_horizontal"] = is_horizontal_bbox(x1, y1, x2, y2)
 
-    features = extract_pose_features(pose) if pose else {
-        "head_visible": False,
-        "legs_visible": False,
-        "head_below_shoulders": False,
-        "hand_above_head": False,
-        "left_arm_head_angle": None,
-        "right_arm_head_angle": None,
-    }
-    
+    features = extract_features(pose, x1, y1, x2, y2)
     mem["head_visible"] = features["head_visible"]
     mem["legs_visible"] = features["legs_visible"]
-    mem["hand_above_head"] = features["hand_above_head"]
-    mem["arm_angle_left"] = features["left_arm_head_angle"]
-    mem["arm_angle_right"] = features["right_arm_head_angle"]
-
-
-    mem["last_seen"] = now
-    mem["last_bbox"] = (x1, y1, x2, y2)
-    mem["last_center"] = (cx, cy)
-    mem["velocity"] = vel
-    mem["is_horizontal"] = horizontal
-    mem["missing_since"] = None
 
     if features["head_below_shoulders"]:
-        if mem["head_below_shoulders_since"] is None:
+        if mem.get("head_below_shoulders_since") is None:
             mem["head_below_shoulders_since"] = now
     else:
         mem["head_below_shoulders_since"] = None
-    
+
     if features["hand_above_head"]:
         if mem.get("hand_above_head_since") is None:
             mem["hand_above_head_since"] = now
@@ -275,35 +220,21 @@ def update_track_memory(track_id, pose, x1, y1, x2, y2, now):
 def update_missing_ids(seen_ids, now):
     for tid, mem in track_memory.items():
         if tid not in seen_ids:
-            if mem["missing_since"] is None:
+            if mem.get("missing_since") is None:
                 mem["missing_since"] = now
-        else:
-            mem["missing_since"] = None
-            
 
-def warn_missing_ids(now):
-    out = []
-    for tid, mem in track_memory.items():
-        if mem["missing_since"] is not None and (now - mem["missing_since"]) > WARNING_SECS:
-            out.append(tid)
-    return out
-    
 
 def cleanup_old_tracks(now):
     to_delete = []
     for tid, mem in track_memory.items():
         if (now - mem.get("last_seen", now)) > MEMORY_TTL_SECS:
             to_delete.append(tid)
-
     for tid in to_delete:
         del track_memory[tid]
 
 
-
-
 def detect_state(track_id, pose, x1, y1, x2, y2, now):
     mem = track_memory.get(track_id, {})
-
     prev_risk = float(mem.get("risk_score", 0.0))
     velocity = float(mem.get("velocity", 0.0))
     horizontal = bool(mem.get("is_horizontal", False))
@@ -313,20 +244,16 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
     hand_above_head_since = mem.get("hand_above_head_since")
     head_low_since = mem.get("head_below_shoulders_since")
 
-    #an leipei wra
     if missing_since is not None and (now - missing_since) >= WARNING_SECS:
-        instant_risk = 1.0
         smoothed_risk = 1.0
         mem["risk_score"] = smoothed_risk
         return "danger", smoothed_risk
 
-    #otan oxi pose alla parauta track?
     if not pose:
         instant_risk = 0.35
         smoothed_risk = SMOOTH_ALPHA * prev_risk + (1.0 - SMOOTH_ALPHA) * instant_risk
         smoothed_risk = min(max(smoothed_risk, 0.0), 1.0)
         mem["risk_score"] = smoothed_risk
-
         if smoothed_risk >= DANGER_THR:
             return "danger", smoothed_risk
         elif smoothed_risk >= WARNING_THR:
@@ -334,50 +261,40 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
         else:
             return "safe", smoothed_risk
 
-    #heuristics
-    
     instant_risk = 0.0
 
-    # horizontal posture
     if horizontal:
         instant_risk += 0.30
 
-    # low motion / stillness
     if velocity < LOW_VEL_THR:
         instant_risk += 0.30
 
-    # head visible but legs not visible
     if head_visible and not legs_visible:
         instant_risk += 0.20
 
-    # head low continuously
     if head_low_since is not None and (now - head_low_since) >= HEAD_LOW_SECS:
         instant_risk += 0.30
 
-    # hand above head continuously
     if hand_above_head_since is not None and (now - hand_above_head_since) >= HAND_UP_SECS:
         instant_risk += 0.30
 
-    # clamp instant risk
     instant_risk = min(max(instant_risk, 0.0), 1.0)
 
-    # ksekathara safe
-    
-    clearly_safe = head_visible and legs_visible and (not horizontal) and (velocity >= LOW_VEL_THR)
+    clearly_safe = (
+        head_visible
+        and legs_visible
+        and (not horizontal)
+        and (velocity >= LOW_VEL_THR)
+    )
 
     if clearly_safe:
         smoothed_risk = prev_risk * SAFE_DECAY
     else:
         smoothed_risk = SMOOTH_ALPHA * prev_risk + (1.0 - SMOOTH_ALPHA) * instant_risk
 
-    # clamp final risk
     smoothed_risk = min(max(smoothed_risk, 0.0), 1.0)
-
-    # save back
     mem["risk_score"] = smoothed_risk
 
-    # state apo katwflia
-    
     if smoothed_risk >= DANGER_THR:
         return "danger", smoothed_risk
     elif smoothed_risk >= WARNING_THR:
@@ -386,18 +303,20 @@ def detect_state(track_id, pose, x1, y1, x2, y2, now):
         return "safe", smoothed_risk
 
 
+@app.get("/ping")
+def ping():
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
-
     try:
         while True:
             frame_bytes = await ws.receive_bytes()
 
-            # JPEG -> BGR
             arr = np.frombuffer(frame_bytes, dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
             if img is None:
                 await ws.send_text(json.dumps({
                     "ok": False,
@@ -405,24 +324,20 @@ async def ws_endpoint(ws: WebSocket):
                 }))
                 continue
 
-            # YOLO inference
-
             results = model(img, conf=CONF_THR, verbose=False)
 
             detections = []
-
+            det_confs = []
             for box in results[0].boxes:
                 cls_id = int(box.cls[0])
                 if cls_id != 0:
-                    continue  # class 0 = person
-
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    continue
+                bx1, by1, bx2, by2 = map(int, box.xyxy[0])
                 conf = float(box.conf[0])
-
                 if conf < CONF_THR:
                     continue
-
-                detections.append([x1, y1, x2, y2, conf])
+                detections.append([bx1, by1, bx2, by2, conf])
+                det_confs.append(conf)
 
             if len(detections) > 0:
                 detections = np.array(detections, dtype=np.float32)
@@ -431,53 +346,50 @@ async def ws_endpoint(ws: WebSocket):
 
             tracks = tracker.update(detections, img.shape[:2], img.shape[:2])
 
-            persons = []
-            count_seen = 0
-
             now = time.time()
+            persons = []
+            seen_ids = set()
+            count_seen = 0
 
             for t in tracks:
                 if count_seen >= MAX_PERSONS:
                     break
-
-                x1, y1, x2, y2 = map(int, t.tlbr)
+                tx1, ty1, tx2, ty2 = map(int, t.tlbr)
                 track_id = int(t.track_id)
+                seen_ids.add(track_id)
 
-                pose = pose_landmarks_for_person(img, x1, y1, x2, y2)
-                
-                mem = update_track_memory(track_id, pose, x1, y1, x2, y2, now)
-                state, risk = detect_state(track_id, pose, x1, y1, x2, y2, now)
+                pose = pose_landmarks_for_person(img, tx1, ty1, tx2, ty2)
+                update_track_memory(track_id, pose, tx1, ty1, tx2, ty2, now)
+                state, risk = detect_state(track_id, pose, tx1, ty1, tx2, ty2, now)
+
+                track_conf = float(getattr(t, "score", 0.0))
 
                 persons.append({
                     "id": track_id,
-                    "x1": int(x1),
-                    "y1": int(y1),
-                    "x2": int(x2),
-                    "y2": int(y2),
-                    #"conf": None,
+                    "x1": int(tx1),
+                    "y1": int(ty1),
+                    "x2": int(tx2),
+                    "y2": int(ty2),
+                    "conf": track_conf,
                     "pose": pose,
                     "state": state,
-                    "risk": round(risk, 2),
+                    "risk": round(float(risk), 3),
                 })
-
                 count_seen += 1
 
-            seen_ids = {int(t.track_id) for t in tracks[:MAX_PERSONS]}
             update_missing_ids(seen_ids, now)
             cleanup_old_tracks(now)
-            
+
             response = {
                 "ok": True,
                 "person_count": len(persons),
                 "persons": persons,
                 "server_ts_ms": int(time.time() * 1000)
             }
-
             await ws.send_text(json.dumps(response))
 
     except WebSocketDisconnect:
         print("Client disconnected", flush=True)
-
     except Exception as e:
         print("SERVER ERROR:", repr(e), flush=True)
         try:
